@@ -12,7 +12,7 @@ const justPressed = {};
 window.addEventListener('keydown', e => {
   justPressed[e.code] = !keys[e.code];
   keys[e.code] = true;
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code))
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyC'].includes(e.code))
     e.preventDefault();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -174,6 +174,53 @@ class ShootingStar extends Asteroid {
   }
 }
 
+// ── Skins ─────────────────────────────────────────────────────────────────────
+// Solo estética: silueta vectorial y colores. Las coordenadas de «verts» usan
+// el mismo espacio que la silueta original (nariz hacia +X, escala comparable)
+// para no alterar colisiones (ship.radius) ni el origen de las balas.
+const SKINS = [
+  { name: 'CLÁSICA',     color: '#fff', boostColor: '#0ff', flame: 'rgba(255, 130, 0, 0.85)',
+    verts: [[20, 0], [-12, -9], [-7, 0], [-12, 9]] },
+  { name: 'DELTA',       color: '#0ff', boostColor: '#fff', flame: 'rgba(255, 255, 255, 0.9)',
+    verts: [[18, 0], [-13, -13], [-13, 13]] },
+  { name: 'INTERCEPTOR', color: '#f0f', boostColor: '#fff', flame: 'rgba(255, 80, 180, 0.9)',
+    verts: [[22, 0], [0, -6], [-13, -12], [-8, 0], [-13, 12], [0, 6]] },
+  { name: 'EXPLORER',    color: '#0f0', boostColor: '#0ff', flame: 'rgba(80, 160, 255, 0.9)',
+    verts: [[15, 0], [7, -9], [-5, -11], [-13, -6], [-13, 6], [-5, 11], [7, 9]] },
+];
+
+const SKIN_KEY = 'asteroids-skin';
+
+function loadSkinIndex() {
+  try {
+    const v = parseInt(localStorage.getItem(SKIN_KEY), 10);
+    if (Number.isInteger(v) && v >= 0 && v < SKINS.length) return v;
+  } catch (e) { /* localStorage no disponible */ }
+  return 0;
+}
+
+let skinIndex      = loadSkinIndex();  // skin activa (índice en SKINS)
+let skinToastTimer = 0;                // tiempo restante del aviso «NAVE: …» en el HUD
+
+function setSkin(i) {
+  skinIndex = wrap(i, SKINS.length);
+  try { localStorage.setItem(SKIN_KEY, String(skinIndex)); } catch (e) { /* ignorar */ }
+}
+
+function cycleSkin() {
+  setSkin(skinIndex + 1);
+  skinToastTimer = 2;
+}
+
+// Traza el contorno cerrado de la nave a partir de sus vértices
+function pathShipVerts(verts) {
+  ctx.beginPath();
+  ctx.moveTo(verts[0][0], verts[0][1]);
+  for (let i = 1; i < verts.length; i++)
+    ctx.lineTo(verts[i][0], verts[i][1]);
+  ctx.closePath();
+}
+
 // ── Ship ──────────────────────────────────────────────────────────────────────
 class Ship {
   constructor() { this.reset(); }
@@ -189,6 +236,7 @@ class Ship {
     this.invincible    = 3;
     this.shootCooldown = 0;
     this.speedBoost    = 0;
+    this.tripleShot    = 0;
     this.dead          = false;
   }
 
@@ -197,6 +245,8 @@ class Ship {
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.speedBoost    > 0) this.speedBoost    -= dt;
+    if (this.tripleShot    > 0) this.tripleShot    -= dt;
+
 
     const ROT   = 3.5;   // rad/s
     const THRUST = this.speedBoost > 0 ? 520 : 260;  // px/s² (x2 con Velocidad)
@@ -223,6 +273,16 @@ class Ship {
     const NOSE = 21;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
+    // Triple disparo: 3 balas paralelas, desplazadas perpendicularmente
+    if (this.tripleShot > 0) {
+      const bullets = [];
+      for (const off of [-7, 0, 7]) {
+        const px = Math.cos(this.angle + Math.PI / 2) * off;
+        const py = Math.sin(this.angle + Math.PI / 2) * off;
+        bullets.push(new Bullet(ox + px, oy + py, this.angle));
+      }
+      return bullets;
+    }
     return [new Bullet(ox, oy, this.angle)];
   }
 
@@ -231,21 +291,18 @@ class Ship {
     // Parpadeo durante invencibilidad de reaparición
     if (this.invincible > 0 && Math.floor(this.invincible * 8) % 2 === 0) return;
 
-    const boost = this.speedBoost > 0;
+    const skin   = SKINS[skinIndex];
+    const boost  = this.speedBoost > 0;
+    const triple = this.tripleShot > 0;
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = boost ? '#0ff' : '#fff';
+    ctx.strokeStyle = triple ? '#f0f' : boost ? skin.boostColor : skin.color;
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
-    // Silueta clásica: triángulo con muesca trasera
-    ctx.beginPath();
-    ctx.moveTo( 20,  0);   // nariz
-    ctx.lineTo(-12, -9);   // ala izquierda
-    ctx.lineTo( -7,  0);   // muesca trasera
-    ctx.lineTo(-12,  9);   // ala derecha
-    ctx.closePath();
+    // Silueta según la skin activa
+    pathShipVerts(skin.verts);
     ctx.stroke();
 
     // Llama del propulsor
@@ -254,7 +311,7 @@ class Ship {
       ctx.moveTo(-8, -4);
       ctx.lineTo(-8 - rand(6, 14), 0);
       ctx.lineTo(-8,  4);
-      ctx.strokeStyle = boost ? 'rgba(0, 255, 255, 0.9)' : 'rgba(255, 130, 0, 0.85)';
+      ctx.strokeStyle = boost ? 'rgba(0, 255, 255, 0.9)' : skin.flame;
       ctx.stroke();
     }
 
@@ -294,15 +351,16 @@ class Particle {
   }
 }
 
-// ── PowerUp (Velocidad) ───────────────────────────────────────────────────────
-const BOOST_DURATION = 5;   // segundos de propulsión doble
-const POWERUP_TTL    = 10;  // segundos en pantalla antes de desaparecer
+// ── PowerUps (Velocidad, Triple) ──────────────────────────────────────────────
+const BOOST_DURATION  = 5;   // segundos de propulsión doble
+const TRIPLE_DURATION = 5;   // segundos de disparo triple
+const POWERUP_TTL     = 10;  // segundos en pantalla antes de desaparecer
 
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, type = 'speed') {
     this.x      = x;
     this.y      = y;
-    this.type   = 'speed';
+    this.type   = type;
     this.radius = 10;
     this.ttl    = POWERUP_TTL;
     this.dead   = false;
@@ -319,17 +377,28 @@ class PowerUp {
 
     ctx.save();
     ctx.translate(this.x, this.y);
-    ctx.strokeStyle = '#0ff';
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
-    // Doble flecha «>>»
-    for (const off of [-4, 3]) {
-      ctx.beginPath();
-      ctx.moveTo(off - 3, -5);
-      ctx.lineTo(off + 3,  0);
-      ctx.lineTo(off - 3,  5);
-      ctx.stroke();
+    if (this.type === 'triple') {
+      // Tres rayitas verticales «|||»
+      ctx.strokeStyle = '#f0f';
+      for (const off of [-5, 0, 5]) {
+        ctx.beginPath();
+        ctx.moveTo(off, -5);
+        ctx.lineTo(off,  5);
+        ctx.stroke();
+      }
+    } else {
+      // Doble flecha «>>»
+      ctx.strokeStyle = '#0ff';
+      for (const off of [-4, 3]) {
+        ctx.beginPath();
+        ctx.moveTo(off - 3, -5);
+        ctx.lineTo(off + 3,  0);
+        ctx.lineTo(off - 3,  5);
+        ctx.stroke();
+      }
     }
 
     ctx.restore();
@@ -406,6 +475,10 @@ function killShip() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
+  // Cambio de skin (tecla C, disponible en cualquier estado)
+  if (pressed('KeyC')) cycleSkin();
+  if (skinToastTimer > 0) skinToastTimer -= dt;
+
   if (state === 'gameover') {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
@@ -455,8 +528,9 @@ function update(dt) {
         score += a.points;
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
-        // 15% de probabilidad de soltar un power-up
-        if (Math.random() < 0.15) powerUps.push(new PowerUp(a.x, a.y));
+        // 15% de probabilidad de soltar un power-up (tipo aleatorio)
+        if (Math.random() < 0.15)
+          powerUps.push(new PowerUp(a.x, a.y, Math.random() < 0.5 ? 'speed' : 'triple'));
       }
     }
   }
@@ -477,7 +551,8 @@ function update(dt) {
   for (const p of powerUps) {
     if (dist(ship, p) < ship.radius + p.radius) {
       p.dead = true;
-      ship.speedBoost = BOOST_DURATION;
+      if (p.type === 'triple') ship.tripleShot  = TRIPLE_DURATION;
+      else                     ship.speedBoost = BOOST_DURATION;
       explode(p.x, p.y, 6);
     }
   }
@@ -488,20 +563,30 @@ function update(dt) {
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 function drawLifeIcon(x, y) {
+  const skin  = SKINS[skinIndex];
+  const scale = 0.5;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(-Math.PI / 2);
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth   = 1.2;
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = skin.color;
+  ctx.lineWidth   = 1.2 / scale;
   ctx.lineJoin    = 'round';
-  ctx.beginPath();
-  ctx.moveTo( 9,  0);
-  ctx.lineTo(-6, -5);
-  ctx.lineTo(-3,  0);
-  ctx.lineTo(-6,  5);
-  ctx.closePath();
+  pathShipVerts(skin.verts);
   ctx.stroke();
   ctx.restore();
+}
+
+function drawPowerBar(label, value, max, color, by) {
+  const bx   = 14;
+  const bw   = 130;
+  const bh   = 6;
+  const frac = Math.min(value / max, 1);
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = color;
+  ctx.fillRect(bx, by, bw * frac, bh);
+  ctx.fillText(`${label} ${value.toFixed(1)}s`, bx + bw + 10, by + bh);
 }
 
 function drawHUD() {
@@ -517,19 +602,23 @@ function drawHUD() {
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
 
-  // Barra y tiempo restante del power-up Velocidad
+  // Barras y tiempo restante de los power-ups activos
+  ctx.textAlign = 'left';
+  let barY = 38;
   if (ship.speedBoost > 0) {
-    const bx   = 14;
-    const by   = 38;
-    const bw   = 130;
-    const bh   = 6;
-    const frac = Math.min(ship.speedBoost / BOOST_DURATION, 1);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = '#0ff';
-    ctx.fillRect(bx, by, bw * frac, bh);
-    ctx.fillText(`VELOCIDAD ${ship.speedBoost.toFixed(1)}s`, bx + bw + 10, by + bh);
+    drawPowerBar('VELOCIDAD', ship.speedBoost, BOOST_DURATION, '#0ff', barY);
+    barY += 14;
+  }
+  if (ship.tripleShot > 0)
+    drawPowerBar('TRIPLE', ship.tripleShot, TRIPLE_DURATION, '#f0f', barY);
+
+  // Aviso temporal al cambiar de skin
+  if (skinToastTimer > 0) {
+    const alpha = Math.min(skinToastTimer / 0.5, 1);   // fundido en el último medio segundo
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(255,255,255,${(alpha * 0.8).toFixed(2)})`;
+    ctx.font      = '14px monospace';
+    ctx.fillText(`NAVE: ${SKINS[skinIndex].name}`, W / 2, H - 24);
   }
 }
 
