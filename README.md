@@ -44,3 +44,4 @@ Luego visita `http://localhost:3000`.
 - Asteroides se parten en fragmentos más pequeños al ser destruidos
 - Partículas de explosión al destruir asteroides
 - Power-up «Velocidad»: al destruir un asteroide puede aparecer uno (15% de probabilidad); al recogerlo, la propulsión de la nave se duplica durante 5 segundos (se muestra barra y tiempo restante en el HUD)
+- Estrellas fugaces: asteroides pequeños y muy rápidos que aparecen de vez en cuando y desaparecen al cabo de unos segundos; otorgan 250 puntos al destruirlos
